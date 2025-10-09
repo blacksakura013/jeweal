@@ -1,9 +1,9 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import Sidebar from "./components/Sidebar";
 import ProductTable from "./components/ProductTable";
 import Basket from "./components/Basket";
-import ProductService from "./services/productService";
 import BookingService from "./services/bookingService";
+import ProductService from "./services/productService";
 
 export default function ProductPage() {
   const token = JSON.parse(localStorage.getItem("user"))?.token;
@@ -14,123 +14,194 @@ export default function ProductPage() {
   const [basket, setBasket] = useState({
     products: [],
     bookingId: null,
+    createdAt: null,
     expiresAt: null,
   });
   const [searchTerm, setSearchTerm] = useState("");
   const [pageState, setPageState] = useState("product");
   const [loading, setLoading] = useState(false);
-  const [Delete_Loading, setDelete_Loading] = useState(false);
-  // โหลดสินค้าและ booking ของ user
-  const fetchData = async () => {
+  const [timeLeft, setTimeLeft] = useState(0);
+
+  const timerRef = useRef(null);
+  const spinnerRef = useRef(null);
+  const basketRef = useRef(basket);
+
+  useEffect(() => {
+    basketRef.current = basket;
+  }, [basket]);
+
+  /** 🟢 โหลดข้อมูลสินค้า */
+  const fetchProducts = async () => {
     try {
       const productsData = await productService.getAllProducts();
+      console.log(productsData);
       setProducts(productsData);
+    } catch (err) {
+      console.error("Error fetching products:", err);
+    }
+  };
 
+  /** 🟢 โหลด booking ของผู้ใช้ */
+  const fetchUserBooking = async () => {
+    try {
       const bookingsData = await bookingService.getAllBookings();
       const userBooking = bookingsData.find((b) => b.status === "pending");
 
       if (userBooking) {
         setBasket({
-          ...userBooking,
           bookingId: userBooking.bookingId,
           products: userBooking.products || [],
+          createdAt: userBooking.createdAt,
           expiresAt: userBooking.expiresAt || null,
         });
+
+        if (userBooking.expiresAt) startCountdown(userBooking.expiresAt);
       } else {
-        setBasket({ products: [], bookingId: null, expiresAt: null });
+        setBasket({
+          products: [],
+          bookingId: null,
+          createdAt: null,
+          expiresAt: null,
+        });
+        setTimeLeft(0);
       }
     } catch (err) {
-      console.error(err);
+      console.error("Error fetching user booking:", err);
     }
+  };
+
+  /** 🟢 โหลดข้อมูลสินค้า + การจองของผู้ใช้ */
+  const fetchData = async () => {
+    await fetchProducts();
+    await fetchUserBooking();
   };
 
   useEffect(() => {
     fetchData();
+    return () => clearInterval(timerRef.current);
   }, []);
+
+  /** 🕒 ตั้งเวลาหมดอายุ 2 นาที ด้วย interval */
+  const startCountdown = (expiresAt) => {
+    clearInterval(timerRef.current);
+
+    const updateTime = () => {
+      const remaining = Math.max(new Date(expiresAt).getTime() - Date.now(), 0);
+      setTimeLeft(remaining);
+
+      if (remaining <= 0) {
+        clearInterval(timerRef.current);
+        handleExpire();
+      }
+    };
+
+    updateTime();
+    timerRef.current = setInterval(updateTime, 1000);
+  };
+
+  /** ❌ หมดเวลา คืนสินค้าเข้าคลัง + โหลดข้อมูลใหม่ */
+  const handleExpire = async () => {
+    if (!basketRef.current.bookingId) return;
+
+    alert("⏰ หมดเวลา 2 นาที! ระบบกำลังรีเซ็ตตะกร้าและสินค้าของคุณ");
+
+    setLoading(true);
+    clearInterval(spinnerRef.current);
+
+    spinnerRef.current = setTimeout(async () => {
+      await fetchData();
+
+      setBasket({
+        products: [],
+        bookingId: null,
+        createdAt: null,
+        expiresAt: null,
+      });
+      setTimeLeft(0);
+      setLoading(false);
+    }, 3000);
+  };
 
   const filtered = products.filter(
     (p) =>
       p.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      p.sn.toLowerCase().includes(searchTerm.toLowerCase())
+      p.items.some((item) =>
+        item.sn.toLowerCase().includes(searchTerm.toLowerCase())
+      )
   );
 
   const totalUnits = basket.products.length;
 
-  // เพิ่มสินค้าเข้า basket
-  const handleAdd = async (item) => {
+  /** 🛒 เพิ่มสินค้าเข้า basket */
+  const handleAdd = async ({ productId, selectedItems }) => {
+    if (!selectedItems || selectedItems.length === 0) {
+      alert("กรุณาเลือกจำนวนสินค้าที่ต้องการก่อน");
+      return;
+    }
+
     try {
-      let bookingId = basket.bookingId;
-      if (!bookingId) {
-        const newBooking = await bookingService.createBooking([
-          { sn: item.sn },
-        ]);
-        if (!newBooking) return;
-        setBasket({
-          ...newBooking,
-          bookingId: newBooking._id,
-          products: [item],
-          expiresAt: newBooking.expiresAt,
-        });
-      } else {
-        await bookingService.addItemsToBooking(bookingId, [{ sn: item.sn }]);
-        setBasket((prev) => ({
-          ...prev,
-          products: [...prev.products, item],
-        }));
+      // หาเฉพาะ SN ที่ว่าง (available)
+      const product = products.find((p) => p._id === productId);
+      if (!product) return;
+
+      const availableSNs = product.items
+        .filter((i) => i.status === "available" && selectedItems.includes(i.sn))
+        .map((i) => i.sn);
+
+      if (availableSNs.length === 0) {
+        alert("สินค้าที่เลือกหมดแล้ว");
+        return;
       }
-      setProducts((prev) => prev.filter((p) => p._id !== item._id));
+
+      const newBooking = await bookingService.createBooking(
+        availableSNs.map((sn) => ({ sn }))
+      );
+      if (!newBooking) return;
+
+      await fetchData();
+
+      // อัปเดต products state → ลบเฉพาะ SN ที่ถูกจองออก
     } catch (err) {
       console.error(err);
     }
   };
 
-  // ลบสินค้าออกจาก basket
-  const handleRemove = async (sn) => {
+  /** ❌ ลบสินค้าออกจากการจอง */
+  const handleRemove = async (snToRemove) => {
     if (!basket.bookingId) return;
     try {
-      await setDelete_Loading(true);
-      await bookingService.removeItemsFromBooking(basket.bookingId, [{ sn }]);
+      await bookingService.removeItemsFromBooking(basket.bookingId, [
+        { sn: snToRemove },
+      ]);
+
       await fetchData();
-      await setDelete_Loading(false);
     } catch (err) {
       console.error(err);
     }
   };
-  const handleExpire = async () => {
-    if (!basket.bookingId) return;
-    try {
-      await bookingService.removeItemsFromBooking(
-        basket.bookingId,
-        basket.products.map((p) => ({ sn: p.sn }))
-      );
-      setBasket({ products: [], bookingId: null, expiresAt: null });
-      await fetchData();
-      alert("⏰ Booking expired. All items returned to stock.");
-    } catch (err) {
-      console.error(err);
-    }
-  };
-  // ยืนยันการขายสินค้า
+
+  /** ✅ ยืนยันการขาย */
   const handleConfirm = async (bookingId) => {
-    await setLoading(true);
     if (!bookingId) return;
+    setLoading(true);
     try {
       const confirmed = await bookingService.confirmBooking(bookingId);
       if (confirmed) {
-        alert(`✅ Sale confirmed! Total items sold: ${confirmed.salesCount}`);
-      
-        await fetchData(); // รีเฟรชสินค้าและ booking ของผู้ใช้
+        alert(`✅ ขายสินค้าสำเร็จ ${confirmed.salesCount} รายการ`);
+        await fetchData();
       }
     } catch (err) {
       console.error(err);
-      alert("❌ Failed to confirm sale.");
+      alert("❌ ไม่สามารถยืนยันการขายได้");
     }
-    await setLoading(false);
+    setLoading(false);
   };
 
+  /** 🧩 UI */
   return (
     <div className="h-screen w-full grid grid-cols-8 bg-gray-50">
       <Sidebar totalUnits={totalUnits} setPageState={setPageState} />
+
       <div className="col-span-7 h-full flex flex-col p-4 overflow-y-auto bg-white">
         <div className="flex items-center justify-between mb-4">
           <header>
@@ -158,10 +229,10 @@ export default function ProductPage() {
                   try {
                     await productService.recoverProducts();
                     await fetchData();
-                    alert("กู้คืนสินค้าสำเร็จแล้ว ✅");
+                    alert("✅ กู้คืนสินค้าสำเร็จ");
                   } catch (err) {
                     console.error(err);
-                    alert("ไม่สามารถกู้คืนสินค้าได้ ❌");
+                    alert("❌ ไม่สามารถกู้คืนสินค้าได้");
                   }
                 }}
                 className="px-3 py-2 bg-primary-500 hover:bg-primary-600 text-white font-semibold rounded-md"
@@ -181,10 +252,9 @@ export default function ProductPage() {
         ) : (
           <Basket
             basket={basket}
+            timeLeft={timeLeft}
             onRemove={handleRemove}
             onConfirm={handleConfirm}
-            setDelete_Loading={setDelete_Loading}
-            onExpire={handleExpire}
           />
         )}
       </div>

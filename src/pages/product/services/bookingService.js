@@ -1,3 +1,4 @@
+// src/services/BookingService.js
 import axios from "axios";
 
 const API_URL = process.env.REACT_APP_URL_APIS;
@@ -13,28 +14,76 @@ export default class BookingService {
     });
   }
 
+  /** Create a new booking with items */
   async createBooking(items) {
-    const res = await this.api.post("/bookings", { items });
-    return res.data.booking;
+    try {
+      const res = await this.api.post("/bookings", { items });
+      return res.data.booking;
+    } catch (err) {
+      console.error(
+        "Error creating booking:",
+        err.response?.data || err.message
+      );
+      return null;
+    }
   }
 
-  async addItemsToBooking(bookingId, items) {
-    const res = await this.api.post(`/bookings/add/${bookingId}`, { items });
-    return res.data.booking;
-  }
 
+  /** Remove items from an existing booking */
   async removeItemsFromBooking(bookingId, items) {
-    const res = await this.api.post(`/bookings/remove/${bookingId}`, { items });
-    return res.data.booking;
+    try {
+      const res = await this.api.post(`/bookings/remove/${bookingId}`, {
+        items,
+      });
+      return res.data.booking;
+    } catch (err) {
+      console.error(
+        "Error removing items from booking:",
+        err.response?.data || err.message
+      );
+      return null;
+    }
   }
 
+  /** Confirm a booking (finalize sale) */
   async confirmBooking(bookingId) {
-    const res = await this.api.post(`/bookings/confirm/${bookingId}`);
-    return res.data;
+    try {
+      const res = await this.api.post(`/bookings/confirm/${bookingId}`);
+      return res.data;
+    } catch (err) {
+      console.error(
+        "Error confirming booking:",
+        err.response?.data || err.message
+      );
+      return null;
+    }
   }
 
+  /** Get all bookings for the user */
   async getAllBookings() {
-    const res = await this.api.get("/bookings");
-    return res.data;
+    try {
+      const res = await this.api.get("/bookings");
+      return res.data;
+    } catch (err) {
+      console.error(
+        "Error fetching bookings:",
+        err.response?.data || err.message
+      );
+      return [];
+    }
+  }
+
+  /** Optional: auto-expire a booking after a set time */
+  async expireBooking(bookingId) {
+    try {
+      const res = await this.api.post(`/bookings/expire/${bookingId}`);
+      return res.data;
+    } catch (err) {
+      console.error(
+        "Error expiring booking:",
+        err.response?.data || err.message
+      );
+      return null;
+    }
   }
 }
