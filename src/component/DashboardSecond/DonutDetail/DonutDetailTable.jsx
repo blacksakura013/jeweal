@@ -71,24 +71,59 @@ const DonutDetailTable = () => {
     group.name.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  // Export CSV function
-  const exportCSV = () => {
-    let csvContent = 'data:text/csv;charset=utf-8,';
-    csvContent += 'Group,Shape,Size,Qty,Cts,Value\n';
-    data.forEach((group) => {
-      group.details.forEach((item) => {
-        const row = `${group.name},${item.shape},${item.size},${item.qty},${item.cts},${item.value}`;
-        csvContent += row + '\n';
-      });
+ // Escape CSV value (สำคัญมาก)
+const escapeCSV = (value) => {
+  if (value === null || value === undefined) return '';
+
+  const str = String(value);
+
+  // ป้องกัน CSV Injection
+  if (/^[=+\-@]/.test(str)) {
+    return `"\'${str.replace(/"/g, '""')}"`;
+  }
+
+  return `"${str.replace(/"/g, '""')}"`;
+};
+
+// Export CSV function
+const exportCSV = () => {
+  const headers = ['Group', 'Shape', 'Size', 'Qty', 'Cts', 'Value'];
+
+  const rows = [];
+  rows.push(headers.join(','));
+
+  data.forEach((group) => {
+    group.details.forEach((item) => {
+      rows.push(
+        [
+          escapeCSV(group.name),
+          escapeCSV(item.shape),
+          escapeCSV(item.size),
+          escapeCSV(item.qty),
+          escapeCSV(item.cts),
+          escapeCSV(item.value),
+        ].join(',')
+      );
     });
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', 'donut_detail_table.csv');
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
+  });
+
+  // UTF-8 BOM for Excel (Windows)
+  const csvContent = '\uFEFF' + rows.join('\r\n');
+
+  const blob = new Blob([csvContent], {
+    type: 'text/csv;charset=utf-8;',
+  });
+
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'donut_detail_table.csv';
+
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+};
 
   return (
     <Box sx={{ mt: 4 }}>
